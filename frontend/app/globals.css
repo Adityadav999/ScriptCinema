@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --accent: #64dcb4;
+  --accent-purple: #dc82ff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Cinematic grid background */
+.cinema-grid {
+  background-image:
+    linear-gradient(rgba(100, 220, 180, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(100, 220, 180, 0.04) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0a0a14;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a2d45;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #64dcb4;
+}
+
+/* Glow effects */
+.glow-accent {
+  box-shadow: 0 0 30px rgba(100, 220, 180, 0.2);
+}
+.glow-purple {
+  box-shadow: 0 0 30px rgba(220, 130, 255, 0.2);
+}
+.text-glow {
+  text-shadow: 0 0 20px rgba(100, 220, 180, 0.5);
+}
+
+/* Animated gradient border */
+.gradient-border {
+  background: linear-gradient(#12141f, #12141f) padding-box,
+              linear-gradient(135deg, #64dcb4, #dc82ff) border-box;
+  border: 1px solid transparent;
+}
