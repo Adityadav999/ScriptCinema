@@ -4,15 +4,15 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import HeroInput from '@/components/HeroInput'
-import { Film, Zap, Code2, GitBranch, BarChart3, Download } from 'lucide-react'
+import { Film, Zap, Code2, GitBranch, Download, Monitor } from 'lucide-react'
 
 const FEATURES = [
-  { icon: Code2, title: 'Code Showcase', desc: 'Syntax-highlighted files scroll cinematically' },
-  { icon: BarChart3, title: 'Language Stats', desc: 'Animated breakdown of your tech stack' },
-  { icon: GitBranch, title: 'Commit History', desc: 'Timeline of recent commits with authors' },
-  { icon: Zap, title: 'Repo Stats', desc: 'Stars, forks, issues and contributors' },
-  { icon: Film, title: 'File Tree', desc: 'Animated exploration of your repo structure' },
-  { icon: Download, title: 'MP4 Download', desc: 'Export a ready-to-share video file' },
+  { icon: GitBranch, title: 'Auto Clone & Run',   desc: 'Clones your repo and starts it in a real environment automatically' },
+  { icon: Zap,       title: 'Stack Detection',    desc: 'Auto-detects Next.js, Vite, CRA, Flask, FastAPI, Django & more' },
+  { icon: Monitor,   title: 'Live Browser',       desc: 'A real Chromium browser opens and navigates your running app' },
+  { icon: Code2,     title: 'Smart Interaction',  desc: 'Clicks nav links, fills forms, scrolls pages automatically' },
+  { icon: Film,      title: 'Cinematic Recording', desc: 'Full browser session recorded and graded with intro/outro' },
+  { icon: Download,  title: 'MP4 Download',       desc: 'Download the final cinematic video of your real project' },
 ]
 
 const EXAMPLE_REPOS = [
