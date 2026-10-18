@@ -1,5 +1,13 @@
 """
 project_detector.py — Inspect a cloned repo and determine how to run it.
+
+Windows notes
+-------------
+* npm / npx ship as .cmd wrappers on Windows — always resolve with shutil.which().
+* All commands here are lists; project_runner.py wraps them in ["cmd", "/c"] on Windows.
+* Never use shell=True — it breaks quote handling for paths with spaces.
+* Port is controlled via the PORT env var wherever possible (Next.js ≥12, CRA, Vite ≥5).
+  For frameworks that ignore PORT, we pass an explicit --port flag.
 """
 import json
 import shutil
@@ -13,18 +21,16 @@ IS_WINDOWS = sys.platform == "win32"
 
 @dataclass
 class ProjectConfig:
-    project_type: str           # Human-readable name, e.g. "Next.js"
-    install_cmd: list[str]      # Command to install dependencies
-    start_cmd: list[str]        # Command to start the dev server
-    port: int                   # Port the server will listen on
+    project_type: str
+    install_cmd: list[str]
+    start_cmd: list[str]
+    port: int
     env_vars: dict[str, str] = field(default_factory=dict)
-    use_shell: bool = False     # Whether subprocess should use shell=True
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _find_free_port(start: int = 4000) -> int:
-    """Find an available TCP port starting from `start`."""
     for port in range(start, start + 200):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             try:
@@ -49,83 +55,70 @@ def _read_text(path: Path) -> str:
         return ""
 
 
-def _exe(name: str) -> str:
+def _w(name: str) -> str:
     """
-    Resolve an executable name to its full path (or .cmd on Windows).
-    Falls back to the bare name if which() finds nothing — subprocess
-    will raise FileNotFoundError with a clear message.
+    Resolve an executable to its full path.
+    On Windows try the .cmd variant first (npm.cmd, npx.cmd, …).
+    Falls back to the bare name so subprocess gives a clear error.
     """
-    # On Windows npm/npx/node are shipped as .cmd wrappers
-    if IS_WINDOWS and name in ("npm", "npx", "ng", "yarn", "pnpm"):
-        cmd_name = name + ".cmd"
-        found = shutil.which(cmd_name)
-        if found:
-            return found
-        # Also try plain name (some installs add a .exe)
-        found = shutil.which(name)
-        if found:
-            return found
-        return cmd_name  # let subprocess surface the error
-
+    if IS_WINDOWS:
+        for variant in (name + ".cmd", name + ".CMD", name):
+            found = shutil.which(variant)
+            if found:
+                return found
+        return name + ".cmd"          # let subprocess surface the error clearly
     found = shutil.which(name)
-    return found if found else name
+    return found or name
 
 
 def _python() -> str:
-    """Return path to the current Python interpreter."""
+    """Absolute path to the current Python interpreter (always works in venv)."""
     return sys.executable
 
 
 def _pip() -> list[str]:
-    """Return a pip invocation using the current interpreter."""
+    """pip invocation that works regardless of PATH — uses current interpreter."""
     return [_python(), "-m", "pip"]
 
 
 # ── Detector ─────────────────────────────────────────────────────────────────
 
 def detect_project(repo_dir: str) -> ProjectConfig:
-    """
-    Inspect the repo directory and return a ProjectConfig describing
-    how to install and start the project.
-    """
     root = Path(repo_dir)
     port = _find_free_port()
-    npm  = _exe("npm")
-    npx  = _exe("npx")
+
+    npm = _w("npm")
+    npx = _w("npx")
 
     # ── 1. Node / JS / TS ────────────────────────────────────────────────────
     pkg_json = root / "package.json"
     if pkg_json.exists():
-        pkg = _read_json(pkg_json)
-        deps = {
-            **pkg.get("dependencies", {}),
-            **pkg.get("devDependencies", {}),
-        }
+        pkg   = _read_json(pkg_json)
+        deps  = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
         scripts = pkg.get("scripts", {})
 
-        # Next.js
+        # Next.js — PORT env var works on Next.js ≥12 (no need for --port flag)
         if "next" in deps:
             return ProjectConfig(
                 project_type="Next.js",
                 install_cmd=[npm, "install", "--legacy-peer-deps"],
-                start_cmd=[npm, "run", "dev", "--", f"--port={port}"],
+                start_cmd=[npm, "run", "dev"],
                 port=port,
                 env_vars={"PORT": str(port), "BROWSER": "none"},
-                use_shell=False,
             )
 
-        # Vite (React / Vue / Svelte / Lit)
+        # Vite — supports --port flag AND VITE_PORT env (use flag, more reliable)
         if "vite" in deps or any(k.startswith("@vitejs/") for k in deps):
             return ProjectConfig(
                 project_type="Vite",
                 install_cmd=[npm, "install", "--legacy-peer-deps"],
-                start_cmd=[npm, "run", "dev", "--", "--port", str(port), "--host"],
+                # Pass --port directly to vite via npx to avoid npm script arg quirks
+                start_cmd=[npx, "vite", "--port", str(port), "--host"],
                 port=port,
-                env_vars={"PORT": str(port), "BROWSER": "none"},
-                use_shell=False,
+                env_vars={"BROWSER": "none"},
             )
 
-        # Create React App
+        # Create React App — respects PORT env var
         if "react-scripts" in deps:
             return ProjectConfig(
                 project_type="Create React App",
@@ -133,7 +126,6 @@ def detect_project(repo_dir: str) -> ProjectConfig:
                 start_cmd=[npm, "start"],
                 port=port,
                 env_vars={"PORT": str(port), "BROWSER": "none", "CI": "false"},
-                use_shell=False,
             )
 
         # Angular
@@ -144,10 +136,19 @@ def detect_project(repo_dir: str) -> ProjectConfig:
                 start_cmd=[npx, "ng", "serve", "--port", str(port), "--host", "0.0.0.0"],
                 port=port,
                 env_vars={},
-                use_shell=False,
             )
 
-        # Generic Node (express, fastify, etc.)
+        # Nuxt 3
+        if "nuxt" in deps:
+            return ProjectConfig(
+                project_type="Nuxt",
+                install_cmd=[npm, "install", "--legacy-peer-deps"],
+                start_cmd=[npm, "run", "dev"],
+                port=port,
+                env_vars={"PORT": str(port), "NUXT_PORT": str(port), "BROWSER": "none"},
+            )
+
+        # Generic Node — dev script preferred over start
         if "dev" in scripts or "start" in scripts:
             cmd = [npm, "run", "dev"] if "dev" in scripts else [npm, "start"]
             return ProjectConfig(
@@ -156,39 +157,32 @@ def detect_project(repo_dir: str) -> ProjectConfig:
                 start_cmd=cmd,
                 port=port,
                 env_vars={"PORT": str(port), "BROWSER": "none"},
-                use_shell=False,
             )
 
     # ── 2. Python ────────────────────────────────────────────────────────────
-    has_requirements = (root / "requirements.txt").exists()
-    has_pyproject    = (root / "pyproject.toml").exists()
+    has_req = (root / "requirements.txt").exists()
+    has_pyp = (root / "pyproject.toml").exists()
 
-    if has_requirements or has_pyproject:
-        req_text = _read_text(root / "requirements.txt") if has_requirements else ""
+    if has_req or has_pyp:
+        req = _read_text(root / "requirements.txt") if has_req else ""
 
         # FastAPI / Uvicorn
-        uvicorn = shutil.which("uvicorn") or "uvicorn"
-        if ("fastapi" in req_text or "uvicorn" in req_text) and (root / "main.py").exists():
+        if ("fastapi" in req or "uvicorn" in req) and (root / "main.py").exists():
             return ProjectConfig(
                 project_type="FastAPI",
                 install_cmd=_pip() + ["install", "-r", "requirements.txt"],
-                start_cmd=[
-                    _python(), "-m", "uvicorn", "main:app",
-                    "--host", "0.0.0.0",
-                    "--port", str(port),
-                ],
+                start_cmd=[_python(), "-m", "uvicorn", "main:app",
+                           "--host", "0.0.0.0", "--port", str(port)],
                 port=port,
                 env_vars={"PORT": str(port)},
-                use_shell=False,
             )
 
         # Flask
-        flask_entry = None
-        for candidate in ["app.py", "wsgi.py", "run.py", "server.py", "application.py"]:
-            if (root / candidate).exists():
-                flask_entry = candidate
-                break
-
+        flask_entry = next(
+            (c for c in ["app.py", "wsgi.py", "run.py", "server.py", "application.py"]
+             if (root / c).exists()),
+            None,
+        )
         if flask_entry:
             return ProjectConfig(
                 project_type="Flask",
@@ -201,7 +195,6 @@ def detect_project(repo_dir: str) -> ProjectConfig:
                     "FLASK_RUN_PORT": str(port),
                     "PORT": str(port),
                 },
-                use_shell=False,
             )
 
         # Django
@@ -212,26 +205,22 @@ def detect_project(repo_dir: str) -> ProjectConfig:
                 start_cmd=[_python(), "manage.py", "runserver", f"0.0.0.0:{port}"],
                 port=port,
                 env_vars={"PORT": str(port)},
-                use_shell=False,
             )
 
         # Streamlit
-        if "streamlit" in req_text:
+        if "streamlit" in req:
             entry = next(
-                (str(p.name) for p in root.glob("*.py") if "app" in p.name.lower() or "main" in p.name.lower()),
+                (p.name for p in root.glob("*.py")
+                 if "app" in p.name.lower() or "main" in p.name.lower()),
                 "app.py",
             )
             return ProjectConfig(
                 project_type="Streamlit",
                 install_cmd=_pip() + ["install", "-r", "requirements.txt"],
-                start_cmd=[
-                    _python(), "-m", "streamlit", "run", entry,
-                    "--server.port", str(port),
-                    "--server.headless", "true",
-                ],
+                start_cmd=[_python(), "-m", "streamlit", "run", entry,
+                           "--server.port", str(port), "--server.headless", "true"],
                 port=port,
                 env_vars={"PORT": str(port)},
-                use_shell=False,
             )
 
     # ── 3. Go ─────────────────────────────────────────────────────────────────
@@ -243,11 +232,10 @@ def detect_project(repo_dir: str) -> ProjectConfig:
             start_cmd=[go, "run", "."],
             port=port,
             env_vars={"PORT": str(port)},
-            use_shell=False,
         )
 
     raise ValueError(
         "Could not detect the project type. "
-        "Supported stacks: Next.js, Vite, CRA, Angular, Node.js, "
+        "Supported: Next.js, Vite, CRA, Angular, Nuxt, Node.js, "
         "FastAPI, Flask, Django, Streamlit, Go."
     )
